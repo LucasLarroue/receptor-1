@@ -6,9 +6,8 @@
  */ 
 .cseg
 
-.ORG	0x0000
-
-	RJMP	MAIN
+.ORG	0x0000	RJMP	MAIN
+.ORG	0x0024	RJMP	INTERRUPT_USART_Rx_COMPLETE
 
 ;————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
 ;Definimos los .def y .equ
@@ -42,6 +41,11 @@ CLR		temp0							; Limpiamos el regitro temp0.
 
 CLI										; Desabilitamos las interrupciones
 
+;——————————————————————————————————————————————————Configuracion de la comunicacion USART————————————————————————————————————
+
+RCALL	USART_INIT
+SEI
+
 ;————————————————————————————————————————————————————Configuramos los pines de salida————————————————————————————————————————
 ;Configuramos los pines de los puertos que usaremos como salida.
 SBI		DDRB, DATA_PIN					; Seteamos PIN de DATA como salida.
@@ -60,12 +64,19 @@ STS		TCCR2B, temp0					; Cargo el valor de TCCR2B.
 CLR		temp0							; Limpiamos el regitro temp0.
 
 ;—————————————————————————————————————————————————————————————————PROGRAMA———————————————————————————————————————————————————
-LDI		speed_motor_1, 0xfe				; Defino la velocidad del motor 1.
-LDI		speed_motor_2, 0xfe				; Defino la velocidad del motor 2.
-LDI		motion_direction,0b00010100		; Define el byte de posición.
-RCALL	CMD_MOTION_SPEED
+INTERRUPT_USART_Rx_COMPLETE:
+RCALL	USART_RECEIVE
+MOV		speed_motor_1,temp0					; Tomo la velocidad del motor 1.
+RCALL	USART_RECEIVE
+MOV		speed_motor_2,temp0					; Tomo la velocidad del motor 2.
+RCALL	USART_RECEIVE
+RCALL	MOTION_RECEIVE
 
-　
+LOOP:
+RCALL	CMD_MOTION_SPEED
+RJMP	LOOP
+RETI
+
 ;———————————————————————————————Secuencia para controlar la dirección y velocidad de los motores—————————————————————————————
 ;Esta secuencia recibe en el registro motoion la direccion de los motores y en los registros speed_motor_1 y speed_motor_2 la 
 ;velocidad de los  mismos.
@@ -107,5 +118,56 @@ RET
 ;————————————————————————————————————————————————————Delay_de_0.2_segundos———————————————————————————————————————————————————
 DALEY_02:
 NOP
+RET
+;—————————————————————————————————————————————————————————USART_INIT—————————————————————————————————————————————————————————
+USART_INIT:
+   ; Set baud rate to UBRR0
+   LDI		temp0,0x00
+   STS		UBRR0H, temp0
+   LDI		temp0,0x1D
+   STS		UBRR0L, temp0
+   ; Enable receiver and transmitter
+   LDI		temp0, (1<<RXEN0)|(1<<TXEN0)
+   STS		UCSR0B,temp0
+   ; Set frame format: 8data, 2stop bit
+   LDI		temp0, (1<<USBS0)|(3<<UCSZ00)
+   STS		UCSR0C,temp0
+   CLR		temp0
+RET
+
+;———————————————————————————————————————————————————————USART_RECEIVE————————————————————————————————————————————————————————
+USART_RECEIVE:
+; Wait for ata to dçbe received
+LDS		temp1, UCSR0A
+SBRS	temp1, RXC0
+RJMP	USART_RECEIVE
+; Get and return received data from buffer
+LDS		temp0,UDR0
+RET
+
+;————————————————————————————————————————————————————MOTION_RECEIVE——————————————————————————————————————————————————————————
+MOTION_RECEIVE:
+MOV	temp1,temp0
+
+ANDI	temp0,0x01
+BREQ	MOTION_X_0
+RCALL	MOTION_X_1
+
+ANDI	temp1,0x01
+BREQ	MOTION_Y_0
+RCALL	MOTION_Y_1
+
+MOTION_X_0:
+ORI		motion_direction,0b00010000
+RET
+MOTION_X_1:
+ORI		motion_direction,0b00000010
+RET
+MOTION_Y_0:
+ORI		motion_direction,0b00001000
+RET
+MOTION_Y_1:
+ORI		motion_direction,0b00000100
+RET
 RET
 ;————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
